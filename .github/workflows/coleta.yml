@@ -30,7 +30,7 @@ env:
 jobs:
   coletar:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
