@@ -1,0 +1,102 @@
+# Coleta do Ramifica Radar no GitHub Actions (as APIs do governo são alcançáveis daqui).
+# - workflow_dispatch: coleta sob demanda (etapa, período, UFs).
+# - schedule: incremental diário (últimos 3 dias).
+# A base fica na Release `base-radar` (radar.duckdb); o bronze de cada execução vai como .tar.gz.
+name: Coleta Radar
+
+on:
+  workflow_dispatch:
+    inputs:
+      etapa: {description: "ibge, pncp, ideb, diarios, alertas, tudo", default: "pncp", required: true}
+      desde: {description: "AAAA-MM-DD", required: false}
+      ate: {description: "AAAA-MM-DD", required: false}
+      ufs: {description: "todas ou SP,MG", default: "todas", required: false}
+  schedule:
+    - cron: "23 9 * * *"   # 06:23 Brasília
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: coleta-radar
+  cancel-in-progress: false
+
+env:
+  RADAR_DADOS: dados
+  BASEDOSDADOS_BILLING_PROJECT: ${{ secrets.BASEDOSDADOS_BILLING_PROJECT }}
+
+jobs:
+  coletar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12", cache: pip, cache-dependency-path: requirements-radar.txt}
+      - run: pip install -r requirements-radar.txt google-cloud-bigquery
+      - name: Credencial da Base dos Dados (BigQuery)
+        env: {GCP_SA_KEY: "${{ secrets.GCP_SA_KEY }}"}
+        run: |
+          printf '%s' "$GCP_SA_KEY" > "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+      - name: Base atual (Release base-radar)
+        if: github.event_name != 'pull_request'
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: mkdir -p dados && (gh release download base-radar -p radar.duckdb -D dados || echo "primeira carga")
+      - name: Validação · cadastro (IBGE ou Base dos Dados)
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 10
+        continue-on-error: true
+        run: python tools/coleta_ci.py ibge --saida r1.md
+      - name: Validação · tabelas da Base dos Dados
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 10
+        continue-on-error: true
+        run: python tools/coleta_ci.py bd-descobrir --saida r2.md
+      - name: Validação · PNCP (SP, 1 dia, pregão/dispensa/concorrência)
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 20
+        continue-on-error: true
+        env: {RADAR_PNCP_MODALIDADES: "4,6,8"}
+        run: python tools/coleta_ci.py pncp --ufs SP --desde "$(date -d '-1 day' +%F)" --ate "$(date -d '-1 day' +%F)" --saida r3.md
+      - name: Coletar
+        id: col
+        if: github.event_name != 'pull_request'
+        env:
+          ETAPA: ${{ inputs.etapa }}
+          DESDE: ${{ inputs.desde }}
+          ATE: ${{ inputs.ate }}
+          UFS: ${{ inputs.ufs }}
+        run: |
+          set +e
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            python tools/coleta_ci.py pncp --desde "$(date -d '-3 day' +%F)" --ate "$(date +%F)" --saida resumo.md
+          else
+            python tools/coleta_ci.py "$ETAPA" --ufs "${UFS:-todas}" --desde "$DESDE" --ate "$ATE" --saida resumo.md
+          fi
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          cat resumo.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Publicar base e bronze (só se a coleta terminou sem erro)
+        if: github.event_name != 'pull_request' && steps.col.outputs.status == '0'
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          gh release view base-radar >/dev/null 2>&1 || gh release create base-radar --title "Base do Radar" \
+            --notes "Base nacional do Ramifica Radar (DuckDB). Atualizada pelo workflow Coleta Radar."
+          gh release upload base-radar dados/radar.duckdb --clobber
+          if [ -d dados/bronze ]; then tar -czf "bronze-$(date +%Y%m%d-%H%M).tar.gz" -C dados bronze && \
+            gh release upload base-radar bronze-*.tar.gz; fi
+      - name: Registrar resultado
+        if: always()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            for f in r1.md r2.md r3.md; do [ -f "$f" ] && cat "$f" && echo || echo "## $f: etapa não terminou (tempo esgotado)"; done > resumo.md
+            gh pr comment ${{ github.event.pull_request.number }} --body-file resumo.md
+          else
+            n=$(gh issue list --label coleta --state open --json number -q '.[0].number')
+            [ -z "$n" ] && n=$(gh issue create --title "Registro de coletas do Radar" --label coleta \
+              --body "Cada execução do workflow Coleta Radar comenta aqui." | grep -o '[0-9]*$')
+            gh issue comment "$n" --body-file resumo.md
+          fi
