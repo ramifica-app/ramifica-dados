@@ -27,6 +27,12 @@ create table if not exists contrato (
 create table if not exists fato_ideb (
   cod_ibge7 varchar, rede varchar, etapa varchar, ano integer, ideb double, nota_saeb double, rendimento double,
   carga_id varchar, primary key (cod_ibge7, rede, etapa, ano));
+create table if not exists fato_matricula (
+  cod_ibge7 varchar, ano integer, rede varchar, etapa varchar, uf varchar, matriculas integer, carga_id varchar,
+  primary key (cod_ibge7, ano, rede, etapa));
+create table if not exists fato_saeb (
+  cod_ibge7 varchar, ano integer, rede varchar, serie integer, disciplina varchar, media double,
+  niveis varchar, carga_id varchar, primary key (cod_ibge7, ano, rede, serie, disciplina));
 create table if not exists diario_trecho (
   id varchar primary key, cod_ibge7 varchar, data date, termo varchar, trecho varchar, url varchar, carga_id varchar);
 create table if not exists alerta (

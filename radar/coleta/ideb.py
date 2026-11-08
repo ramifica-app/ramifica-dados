@@ -1,4 +1,9 @@
-"""Ideb por município (Inep). Lê as planilhas oficiais, detecta o cabeçalho e derrete os anos."""
+"""Ideb municipal do Inep: Base dos Dados primeiro, planilhas oficiais como reserva.
+
+Fonte: ``basedosdados.br_inep_ideb.municipio``; contrato e domínios conferidos
+em ``brain/10-fontes/BD_IDEB_MUNICIPIO.md`` (2026-11-08).
+Municipal e pública são recortes distintos: nunca somamos suas notas.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +14,58 @@ import zipfile
 import pandas as pd
 
 from radar import banco, config
+from radar.coleta import basedosdados
 from radar.http import baixar, guardar_bruto
+
+SQL_IDEB = """
+SELECT ano, id_municipio, LOWER(rede) AS rede, anos_escolares,
+       ideb, nota_saeb_media_padronizada, indicador_rendimento
+FROM `basedosdados.br_inep_ideb.municipio`
+WHERE ensino = 'fundamental'
+  AND anos_escolares IN ('iniciais (1-5)', 'finais (6-9)')
+  AND LOWER(rede) IN ('municipal', 'publica')
+""".strip()
+
+_ETAPAS_BD = {"iniciais (1-5)": "anos_iniciais", "finais (6-9)": "anos_finais"}
+
+
+def carregar_bd(con, cli=None, log=print) -> int | None:
+    """Grava o recorte municipal da BD; None sinaliza falha, zero é sucesso vazio.
+
+    ``cli`` aceita cliente falso. A falha fica em ``carga`` e permite à fachada
+    tentar as planilhas, sem confundir ausência de notas com indisponibilidade.
+    """
+    cid = banco.nova_carga(con, "ideb_basedosdados")
+    try:
+        linhas = []
+        for r in basedosdados.consultar(SQL_IDEB, cli):
+            if r.get("ideb") is None:
+                continue
+            etapa = _ETAPAS_BD.get(r.get("anos_escolares"))
+            rede = str(r.get("rede") or "").strip().lower()
+            cod = str(r.get("id_municipio") or "").strip()
+            if etapa is None or rede not in ("municipal", "publica") or not cod.isdigit() or len(cod) > 7:
+                continue
+            linhas.append({"cod_ibge7": cod.zfill(7), "rede": rede, "etapa": etapa,
+                           "ano": int(r["ano"]), "ideb": r["ideb"],
+                           "nota_saeb": r.get("nota_saeb_media_padronizada"),
+                           "rendimento": r.get("indicador_rendimento"), "carga_id": cid})
+        n = banco.upsert(con, "fato_ideb", linhas)
+        banco.fechar_carga(con, cid, n)
+        log(f"Ideb Base dos Dados: {n} linhas")
+        return n
+    except Exception as e:  # noqa: BLE001 - falha auditada; a fachada tenta a fonte reserva
+        banco.fechar_carga(con, cid, 0, "falha", str(e)[:500])
+        log(f"Ideb Base dos Dados: FALHA {e}")
+        return None
+
+
+def carregar(con, planilhas: dict | None = None, log=print, *, cli=None) -> int:
+    """Tenta BD primeiro; somente uma falha aciona o leitor original de planilhas."""
+    n = carregar_bd(con, cli=cli, log=log)
+    if n is not None:
+        return n
+    return _carregar_planilhas(con, planilhas=planilhas, log=log)
 
 
 def ler_planilha(conteudo: bytes, etapa: str) -> list[dict]:
@@ -41,7 +97,7 @@ def ler_planilha(conteudo: bytes, etapa: str) -> list[dict]:
     return out
 
 
-def carregar(con, planilhas: dict | None = None, log=print) -> int:
+def _carregar_planilhas(con, planilhas: dict | None = None, log=print) -> int:
     total = 0
     for (edicao, etapa), url in (planilhas or config.IDEB_PLANILHAS).items():
         cid = banco.nova_carga(con, f"ideb_{edicao}_{etapa}")

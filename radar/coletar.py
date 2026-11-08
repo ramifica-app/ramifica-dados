@@ -4,9 +4,12 @@ Exemplos:
   python -m radar.coletar ibge                      # cadastro de todos os municípios + malhas das 27 UFs
   python -m radar.coletar pncp --desde 2021-01-01   # licitações e contratos educacionais municipais, Brasil
   python -m radar.coletar pncp --desde 2026-10-01 --ufs SP,MG --so-licitacoes
-  python -m radar.coletar ideb                      # Ideb municipal das planilhas configuradas
+  python -m radar.coletar ideb                      # Ideb via Base dos Dados; planilhas como reserva
   python -m radar.coletar diarios --desde 2026-01-01
   python -m radar.coletar alertas
+  python -m radar.coletar censo                      # matrículas municipais do Censo Escolar (Base dos Dados)
+  python -m radar.coletar saeb                       # proficiência e níveis municipais; fora de tudo
+  python -m radar.coletar bd-sondar                  # bytes (dry-run) e domínios das próximas tabelas BD
   python -m radar.coletar tudo --desde 2025-01-01
 """
 
@@ -20,7 +23,8 @@ from radar import alertas, banco, config
 
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="radar.coletar")
-    p.add_argument("etapa", choices=["ibge", "pncp", "ideb", "diarios", "alertas", "tudo", "bd-descobrir"])
+    p.add_argument("etapa", choices=["ibge", "pncp", "ideb", "diarios", "alertas", "censo", "saeb",
+                                    "tudo", "bd-descobrir", "bd-sondar"])
     p.add_argument("--desde", type=date.fromisoformat, default=date(date.today().year, 1, 1))
     p.add_argument("--ate", type=date.fromisoformat, default=date.today())
     p.add_argument("--ufs", default="todas", help="todas ou lista separada por vírgula (ex.: SP,MG)")
@@ -46,6 +50,15 @@ def main(argv: list[str] | None = None) -> None:
     if a.etapa in ("diarios", "tudo"):
         from radar.coleta import querido_diario
         print("Querido Diário:", querido_diario.coletar(con, a.desde, a.ate))
+    if a.etapa == "censo":
+        from radar.coleta import censo_escolar
+        print("Censo Escolar:", censo_escolar.carregar(con))
+    if a.etapa == "saeb":
+        from radar.coleta import saeb
+        print("Saeb:", saeb.carregar(con))
+    if a.etapa == "bd-sondar":
+        from radar.coleta import basedosdados
+        print(basedosdados.sonda_markdown(basedosdados.sondar()))
     if a.etapa == "bd-descobrir":
         from radar.coleta import basedosdados
         for ds, tabs in basedosdados.descobrir().items():

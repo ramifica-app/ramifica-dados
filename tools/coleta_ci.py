@@ -17,7 +17,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ))
 
-ETAPAS = ("ibge", "pncp", "ideb", "diarios", "alertas", "tudo", "bd-descobrir")
+ETAPAS = ("ibge", "pncp", "ideb", "diarios", "alertas", "censo", "saeb", "tudo", "bd-descobrir", "bd-sondar")
 TABELAS = ("dim_municipio", "licitacao", "contrato", "fato_ideb", "diario_trecho", "alerta", "carga")
 
 
