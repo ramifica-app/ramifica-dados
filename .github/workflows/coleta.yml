@@ -7,7 +7,7 @@ name: Coleta Radar
 on:
   workflow_dispatch:
     inputs:
-      etapa: {description: "ibge, pncp, ideb, diarios, alertas, tudo", default: "pncp", required: true}
+      etapa: {description: "uma ou mais, separadas por vírgula: ibge, pncp, ideb, censo, saeb, diarios, alertas, tudo, bd-sondar", default: "pncp", required: true}
       desde: {description: "AAAA-MM-DD", required: false}
       ate: {description: "AAAA-MM-DD", required: false}
       ufs: {description: "todas ou SP,MG", default: "todas", required: false}
@@ -54,7 +54,7 @@ jobs:
         if: github.event_name == 'pull_request'
         timeout-minutes: 10
         continue-on-error: true
-        run: python tools/coleta_ci.py bd-descobrir --saida r2.md
+        run: python tools/coleta_ci.py bd-sondar --saida r2.md
       - name: Validação · PNCP (SP, 1 dia, pregão/dispensa/concorrência)
         if: github.event_name == 'pull_request'
         timeout-minutes: 20
@@ -74,12 +74,18 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             python tools/coleta_ci.py pncp --desde "$(date -d '-3 day' +%F)" --ate "$(date +%F)" --saida resumo.md
           else
-            python tools/coleta_ci.py "$ETAPA" --ufs "${UFS:-todas}" --desde "$DESDE" --ate "$ATE" --saida resumo.md
+            st=0; : > resumo.md
+            IFS=',' read -ra LISTA <<< "$ETAPA"
+            for E in "${LISTA[@]}"; do   # cada etapa é validada pelo coleta_ci (lista fechada)
+              python tools/coleta_ci.py "$E" --ufs "${UFS:-todas}" --desde "$DESDE" --ate "$ATE" --saida "r-$E.md" || st=1
+              cat "r-$E.md" >> resumo.md 2>/dev/null; echo >> resumo.md
+            done
+            (exit $st)
           fi
           echo "status=$?" >> "$GITHUB_OUTPUT"
           cat resumo.md >> "$GITHUB_STEP_SUMMARY"
       - name: Publicar base e bronze (só se a coleta terminou sem erro)
-        if: github.event_name != 'pull_request' && steps.col.outputs.status == '0'
+        if: github.event_name != 'pull_request' && steps.col.outputs.status == '0' && !startsWith(inputs.etapa, 'bd-')
         env: {GH_TOKEN: "${{ github.token }}"}
         run: |
           gh release view base-radar >/dev/null 2>&1 || gh release create base-radar --title "Base do Radar" \

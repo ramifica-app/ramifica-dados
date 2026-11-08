@@ -16,6 +16,9 @@ GEO = DADOS / "geo"              # malhas GeoJSON do IBGE
 BANCO = Path(os.environ.get("RADAR_BANCO", DADOS / "radar.duckdb"))
 MANIFESTO = BRONZE / "manifesto.jsonl"
 
+# Recorte da série do Censo no BigQuery; configure antes de iniciar o processo.
+CENSO_ANO_MIN = int(os.environ.get("RADAR_CENSO_ANO_MIN", "2015"))
+
 USER_AGENT = "RamificaRadar/0.1 (pesquisa academica; dados publicos)"
 
 # Intervalo mínimo (s) entre pedidos por host — o PNCP devolve 429 com rajadas.
